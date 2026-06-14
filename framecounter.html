@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>60fps Frame Counter</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f9;
+            color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 400px;
+        }
+        h2 {
+            margin-top: 0;
+            font-size: 1.5rem;
+            text-align: center;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"], input[type="number"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-size: 1rem;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+        }
+        button {
+            flex: 1;
+            padding: 12px;
+            font-size: 1rem;
+            font-weight: bold;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        #startBtn {
+            background-color: #4CAF50;
+            color: white;
+        }
+        #startBtn:hover { background-color: #45a049; }
+        #stopBtn {
+            background-color: #f44336;
+            color: white;
+        }
+        #stopBtn:hover { background-color: #d32f2f; }
+        #stopBtn:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .note {
+            font-size: 0.85rem;
+            color: #666;
+            margin-top: 15px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>60fps Frame Counter</h2>
+    
+    <div class="form-group">
+        <label for="loopDuration">ループデュレーション（秒）</label>
+        <input type="number" id="loopDuration" value="1" step="0.1" min="0.1">
+    </div>
+
+    <div class="form-group">
+        <label for="targetFrames">鳴らすフレーム (カンマ区切り)</label>
+        <input type="text" id="targetFrames" value="1, 25, 53" placeholder="例: 1, 25, 53">
+    </div>
+
+    <div class="controls">
+        <button id="startBtn">スタート</button>
+        <button id="stopBtn" disabled>ストップ</button>
+    </div>
+
+    <div class="note">
+        ※1フレーム目は0秒地点として計算されます（60fps基準）。
+    </div>
+</div>
+
+<script>
+    let audioContext;
+    let isPlaying = false;
+    let loopDuration = 1.0;
+    let targetFrames = [];
+    let nextStartTime = 0;
+    let timerID;
+
+    // 指定した時間にビープ音を鳴らす関数
+    function playBeep(time) {
+        const osc = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        osc.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        // 音の高さ（880Hz = ラの音）
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(880, time);
+        
+        // プツッというノイズを防ぐためのエンベロープ（音量制御）
+        gainNode.gain.setValueAtTime(0, time);
+        gainNode.gain.linearRampToValueAtTime(1, time + 0.005);
+        gainNode.gain.linearRampToValueAtTime(0, time + 0.05); // 50msの短い音
+        
+        osc.start(time);
+        osc.stop(time + 0.05);
+    }
+
+    // 先行スケジューリングを行う関数（正確なタイミングの要）
+    function scheduler() {
+        // 現在時刻から0.1秒先までに鳴らすべき音があればスケジュールする
+        while (nextStartTime < audioContext.currentTime + 0.1) {
+            
+            targetFrames.forEach(frame => {
+                // フレームを秒に変換 (1フレーム目 = 0秒, 60fps基準)
+                const frameTime = (frame - 1) / 60.0;
+                
+                // フレームの時間がループデュレーション内に収まっている場合のみ鳴らす
+                if (frameTime < loopDuration) {
+                    playBeep(nextStartTime + frameTime);
+                }
+            });
+            
+            // 次のループの開始時間を設定
+            nextStartTime += loopDuration;
+        }
+        
+        // 25ミリ秒ごとにスケジュールをチェック
+        timerID = setTimeout(scheduler, 25.0);
+    }
+
+    document.getElementById('startBtn').addEventListener('click', () => {
+        if (isPlaying) return;
+
+        // AudioContextの初期化（ブラウザの仕様によりユーザー操作時に初期化が必要）
+        if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioContext.state === 'suspended') {
+            audioContext.resume();
+        }
+
+        // 入力値の取得とパース
+        loopDuration = parseFloat(document.getElementById('loopDuration').value);
+        const framesStr = document.getElementById('targetFrames').value;
+        targetFrames = framesStr.split(',').map(n => parseInt(n.trim())).filter(n => !isNaN(n));
+
+        isPlaying = true;
+        document.getElementById('startBtn').disabled = true;
+        document.getElementById('stopBtn').disabled = false;
+
+        // すぐに開始
+        nextStartTime = audioContext.currentTime + 0.05;
+        scheduler();
+    });
+
+    document.getElementById('stopBtn').addEventListener('click', () => {
+        isPlaying = false;
+        clearTimeout(timerID);
+        document.getElementById('startBtn').disabled = false;
+        document.getElementById('stopBtn').disabled = true;
+    });
+</script>
+
+</body>
+</html>
